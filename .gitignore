@@ -1,0 +1,30 @@
+# npm lock file (v5.0.0+)
+/package-lock.json
+
+# Ignore basic folders
+/dist
+/.rpt2_cache
+/tsc-out
+/node_modules
+/_book
+/build/*
+
+# Log files
+*.log
+
+# TypeScript definitions installed by Typings
+/typings
+
+# Screeps Config
+screeps.json
+
+
+# Misc git ignore files
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
