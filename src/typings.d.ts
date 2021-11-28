@@ -11,6 +11,7 @@ declare global {
     role: string;
     room?: string;
     working?: boolean;
+    forgetTarget?: string;
   }
 
   interface Creep {
