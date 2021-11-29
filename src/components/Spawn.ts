@@ -7,7 +7,7 @@ interface CreepDefinition {
 const creepTable: CreepDefinition[] = [
   {
     role: "harvester",
-    body: [WORK, WORK, WORK, CARRY, CARRY, MOVE, MOVE],
+    body: [WORK, CARRY, CARRY, MOVE, MOVE],
     limit: 5
   },
   {

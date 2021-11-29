@@ -11,7 +11,8 @@ declare global {
     role: string;
     room?: string;
     working?: boolean;
-    forgetTarget?: string;
+    forgetTarget?: string[];
+    seekTimeout?: number;
   }
 
   interface Creep {

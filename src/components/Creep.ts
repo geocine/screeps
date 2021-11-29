@@ -1,31 +1,3 @@
-const getTargetResource = (creep: Creep): Source | null => {
-  let forgetTarget: Source | null = null;
-  if (creep.memory.forgetTarget) {
-    forgetTarget = Game.getObjectById(creep.memory.forgetTarget);
-  }
-  let closestResource = creep.room.find(FIND_SOURCES, {
-    filter: source => {
-      return source.id !== forgetTarget?.id;
-    }
-  });
-
-  if (closestResource.length) {
-    // check if closestResource[0] is visible or reachable
-    // const inRange = creep.pos.inRangeTo(closestResource[0], 3);
-    // creep.say(inRange ? "🔍" : "🔎");
-    if (closestResource[0]) {
-      let creepsAroundResource = getCreepsNearResource(closestResource[0], creep);
-      // creep.say("around " + creepsAroundResource);
-      if (creepsAroundResource > 2) {
-        creep.say("🔄 forgetting");
-        creep.memory.forgetTarget = closestResource[0].id;
-      }
-      return closestResource[0];
-    }
-  }
-  return null;
-};
-
 const getCreepsNearResource = (source: Source, creep: Creep) => {
   let creepsAroundResource1 = source.pos
     .findInRange(FIND_MY_CREEPS, 2)
@@ -37,25 +9,80 @@ const getCreepsNearResource = (source: Source, creep: Creep) => {
   return creepsAroundResource1.length + creepsAroundResource2.length;
 };
 
-const harvest = (creep: Creep) => {
-  let source = getTargetResource(creep);
-  // check if creep is harvesting
-  let out = null;
-  if (source) {
-    out = creep.harvest(source);
-    // creep say status
-    creep.say(out.toString());
+const getNextClosestResource = (creep: Creep): Source | null => {
+  let forgetTarget: Source[] | null = null;
+  if (creep.memory.seekTimeout == Game.time) {
+    // check which resource the creep is near to
+    let forgetNearestResource = creep.room.find(FIND_SOURCES, {
+      filter: source => {
+        const range = creep.pos.getRangeTo(source);
+        return range == 2;
+      }
+    });
+    if (forgetNearestResource.length > 0) {
+      creep.memory.forgetTarget = [forgetNearestResource[0].id];
+    } else {
+      creep.memory.forgetTarget = [];
+    }
   }
-  if (source && out == ERR_NOT_IN_RANGE) {
+  if (creep.memory.forgetTarget) {
+    if (typeof creep.memory.forgetTarget == "string") {
+      creep.memory.forgetTarget = [creep.memory.forgetTarget];
+    }
+    forgetTarget = creep.memory.forgetTarget?.map((target: string): Source => {
+      return Game.getObjectById(target) as Source;
+    });
+  }
+  let availableResources = creep.room.find(FIND_SOURCES, {
+    filter: source => {
+      // check if source is in forgetTarget
+      if (forgetTarget) {
+        return !forgetTarget.includes(source);
+      }
+      return true;
+    }
+  });
+
+  // create map for resource with number of creeps near resource
+  let resourceMap = new Map<Source, [number, number]>();
+  for (const resource of availableResources) {
+    const range = creep.pos.getRangeTo(resource);
+    const creepsNearResource = getCreepsNearResource(resource, creep);
+    resourceMap.set(resource, [range, creepsNearResource]);
+  }
+
+  // sort resources by range and creeps near resource
+  let sortedResources = Array.from(resourceMap.entries()).sort((a, b) => {
+    if (a[1][0] === b[1][0]) {
+      return a[1][1] - b[1][1];
+    }
+    return a[1][0] - b[1][0];
+  });
+
+  // get key of first item in sortedResources
+  let closestResource = sortedResources[0] ? sortedResources[0][0] : null;
+
+  return closestResource;
+};
+
+const harvest = (creep: Creep) => {
+  let source = getNextClosestResource(creep);
+  // check if creep is harvesting energy from source
+  if (source && creep.harvest(source) == ERR_NOT_IN_RANGE) {
     // get range to source
     const range = creep.pos.getRangeTo(source);
     creep.say(range ? range.toString() : "🔍");
-    const num = getCreepsNearResource(source, creep);
-    if (range == 2 || num > 2) {
-      source = getTargetResource(creep);
+    if (range == 2) {
+      if (creep.memory.seekTimeout && creep.memory.seekTimeout < Game.time) {
+        creep.memory.seekTimeout = Game.time + 10;
+      }
     }
     if (source) {
       creep.moveTo(source, { visualizePathStyle: { stroke: "#ffaa00" } });
+    }
+  } else {
+    if (creep.memory.seekTimeout && creep.memory.seekTimeout < Game.time) {
+      creep.memory.seekTimeout = Game.time + 10;
     }
   }
 };
@@ -71,7 +98,8 @@ const loop = (creep: Creep) => {
           return (
             (structure.structureType == STRUCTURE_EXTENSION ||
               structure.structureType == STRUCTURE_SPAWN ||
-              structure.structureType == STRUCTURE_TOWER) &&
+              structure.structureType == STRUCTURE_TOWER ||
+              structure.structureType == STRUCTURE_STORAGE) &&
             structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0
           );
         }
