@@ -7,6 +7,10 @@ declare global {
     log: any;
   }
 
+  interface RawMemory {
+    _parsed: Memory;
+  }
+
   interface CreepMemory {
     role: string;
     room?: string;
@@ -23,6 +27,7 @@ declare global {
   namespace NodeJS {
     interface Global {
       log: any;
+      Memory?: Memory;
     }
   }
 }
