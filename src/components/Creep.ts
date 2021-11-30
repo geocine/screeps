@@ -9,30 +9,29 @@ const getCreepsNearResource = (source: Source, creep: Creep) => {
   return creepsAroundResource1.length + creepsAroundResource2.length;
 };
 
+Creep.prototype.log = function (message: string, limitName?: string) {
+  if (limitName && limitName == this.name) {
+    console.log(`${this.name}: ${message}`);
+  }
+  if (!limitName) {
+    console.log(`${this.name}: ${message}`);
+  }
+};
+
 const getNextClosestResource = (creep: Creep): Source | null => {
   let forgetTarget: Source[] | null = null;
   if (creep.memory.seekTimeout == Game.time) {
-    // check which resource the creep is near to
-    let forgetNearestResource = creep.room.find(FIND_SOURCES, {
-      filter: source => {
-        const range = creep.pos.getRangeTo(source);
-        return range == 2;
-      }
-    });
-    if (forgetNearestResource.length > 0) {
-      creep.memory.forgetTarget = [forgetNearestResource[0].id];
-    } else {
-      creep.memory.forgetTarget = [];
-    }
+    creep.memory.forgetTarget = [];
   }
   if (creep.memory.forgetTarget) {
     if (typeof creep.memory.forgetTarget == "string") {
       creep.memory.forgetTarget = [creep.memory.forgetTarget];
     }
-    forgetTarget = creep.memory.forgetTarget?.map((target: string): Source => {
+    forgetTarget = creep.memory.forgetTarget?.map((target: Id<Source>): Source => {
       return Game.getObjectById(target) as Source;
     });
   }
+
   let availableResources = creep.room.find(FIND_SOURCES, {
     filter: source => {
       // check if source is in forgetTarget
@@ -62,6 +61,17 @@ const getNextClosestResource = (creep: Creep): Source | null => {
   // get key of first item in sortedResources
   let closestResource = sortedResources[0] ? sortedResources[0][0] : null;
 
+  if (closestResource) {
+    let cachedWalkableLocationsMap = global.roomSources.find(sources => sources.id == closestResource!.id);
+    if (sortedResources[0][1][1] >= (cachedWalkableLocationsMap?.walkableLocations?.length || 0)) {
+      // check if closest exist on forget target before pushing to array
+      if (!creep.memory.forgetTarget?.includes(closestResource.id)) {
+        creep.memory.forgetTarget?.push(closestResource.id);
+      }
+      closestResource = null;
+    }
+  }
+
   return closestResource;
 };
 
@@ -86,12 +96,16 @@ const harvest = (creep: Creep) => {
       return true;
     }
   }
+  if (creep.memory.role !== "harvester" && !source) {
+    harvestStorage(creep);
+  }
   setCreepTimeout(creep, 10);
 
   return false;
 };
 
 const transfer = (creep: Creep) => {
+  type TransferTarget = StructureExtension | StructureStorage | StructureSpawn | StructureTower;
   const targets = creep.room.find(FIND_STRUCTURES, {
     filter: structure => {
       return (
@@ -103,9 +117,42 @@ const transfer = (creep: Creep) => {
       );
     }
   });
-  if (targets.length > 0) {
-    if (creep.transfer(targets[0], RESOURCE_ENERGY) == ERR_NOT_IN_RANGE) {
-      creep.moveTo(targets[0], { visualizePathStyle: { stroke: "#ffffff" } });
+
+  let target = null;
+
+  // if creep role is not harvester do this
+  if (creep.memory.role !== "harvester") {
+    // get energy and capacity of all targets
+    let targetsRatio = targets.map(target => {
+      return {
+        value: target.id,
+        structureType: target.structureType,
+        ratio:
+          (target as TransferTarget).store.getUsedCapacity(RESOURCE_ENERGY) /
+          (target as TransferTarget).store.getCapacity(RESOURCE_ENERGY)
+      };
+    });
+
+    // remove storage fro targetsRatio
+    targetsRatio = targetsRatio.filter(target => target.structureType !== STRUCTURE_STORAGE);
+
+    // sort targets by ratio
+    targetsRatio.sort((a, b) => {
+      return a.ratio - b.ratio;
+    });
+
+    // get game object of target with lowest ratio
+    if (targetsRatio && targetsRatio.length > 0) {
+      target = Game.getObjectById(targetsRatio[0].value) as TransferTarget;
+    }
+  } else {
+    // get room storage as target for transfer
+    target = creep.room.storage;
+  }
+
+  if (target) {
+    if (creep.transfer(target, RESOURCE_ENERGY) == ERR_NOT_IN_RANGE) {
+      creep.moveTo(target, { visualizePathStyle: { stroke: "#ffffff" } });
     }
   }
 };
@@ -135,6 +182,15 @@ const withdraw = (creep: Creep) => {
   }
 };
 
+const harvestStorage = (creep: Creep) => {
+  let storage = creep.room.storage;
+  if (storage) {
+    if (creep.withdraw(storage, RESOURCE_ENERGY) == ERR_NOT_IN_RANGE) {
+      creep.moveTo(storage, { visualizePathStyle: { stroke: "#ffffff" } });
+    }
+  }
+};
+
 const getWalkableLocations = (source: Source) => {
   // check terrain around source and return locations that are walkable at range 1
   let terrain = source.room.lookForAtArea(
@@ -146,11 +202,25 @@ const getWalkableLocations = (source: Source) => {
     true
   );
   // get locations that are walkable
-  let walkableLocations = terrain.filter(location => location.terrain !== "wall");
-  return walkableLocations.length;
+  return terrain.filter(location => location.terrain !== "wall");
 };
 
 const loop = (creep: Creep) => {
+  if (!global.roomSources) {
+    // get all source in room
+    const sources = creep.room.find(FIND_SOURCES);
+    // create array for sources with walkable locations
+    global.roomSources = sources.map(source => {
+      return {
+        id: source.id,
+        walkableLocations: getWalkableLocations(source).map(location => ({
+          x: location.x,
+          y: location.y
+        }))
+      };
+    });
+  }
+
   // harvester logic
   if (creep.memory.role === "harvester") {
     if (creep.store.getFreeCapacity() > 0) {
@@ -194,7 +264,7 @@ const loop = (creep: Creep) => {
     }
     if (!creep.memory.working && creep.store.getFreeCapacity() == 0) {
       creep.memory.working = true;
-      creep.say("🚧 build");
+      creep.say("🚧 work");
     }
 
     if (creep.memory.working) {
