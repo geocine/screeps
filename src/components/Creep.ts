@@ -62,7 +62,25 @@ const getNextClosestResource = (creep: Creep): Source | null => {
   // get key of first item in sortedResources
   let closestResource = sortedResources[0] ? sortedResources[0][0] : null;
 
+  if (!closestResource) {
+    // find ruins in room and try to harvest them
+    let ruins = creep.room.find(FIND_RUINS);
+    if (ruins.length > 0) {
+      // try to withdraw from ruin
+      creep.say("🔍");
+      if (creep.withdraw(ruins[0], RESOURCE_ENERGY) == ERR_NOT_IN_RANGE) {
+        creep.moveTo(ruins[0]);
+      }
+    }
+  }
+
   return closestResource;
+};
+
+const setCreepTimeout = (creep: Creep, timeout: number) => {
+  if (!creep.memory.seekTimeout || (creep.memory.seekTimeout && creep.memory.seekTimeout < Game.time)) {
+    creep.memory.seekTimeout = Game.time + timeout;
+  }
 };
 
 const harvest = (creep: Creep) => {
@@ -73,17 +91,13 @@ const harvest = (creep: Creep) => {
     const range = creep.pos.getRangeTo(source);
     creep.say(range ? range.toString() : "🔍");
     if (range == 2) {
-      if (creep.memory.seekTimeout && creep.memory.seekTimeout < Game.time) {
-        creep.memory.seekTimeout = Game.time + 10;
-      }
+      setCreepTimeout(creep, 10);
     }
     if (source) {
       creep.moveTo(source, { visualizePathStyle: { stroke: "#ffaa00" } });
     }
   } else {
-    if (creep.memory.seekTimeout && creep.memory.seekTimeout < Game.time) {
-      creep.memory.seekTimeout = Game.time + 10;
-    }
+    setCreepTimeout(creep, 10);
   }
 };
 
