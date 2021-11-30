@@ -62,18 +62,6 @@ const getNextClosestResource = (creep: Creep): Source | null => {
   // get key of first item in sortedResources
   let closestResource = sortedResources[0] ? sortedResources[0][0] : null;
 
-  if (!closestResource) {
-    // find ruins in room and try to harvest them
-    let ruins = creep.room.find(FIND_RUINS);
-    if (ruins.length > 0) {
-      // try to withdraw from ruin
-      creep.say("🔍");
-      if (creep.withdraw(ruins[0], RESOURCE_ENERGY) == ERR_NOT_IN_RANGE) {
-        creep.moveTo(ruins[0]);
-      }
-    }
-  }
-
   return closestResource;
 };
 
@@ -95,34 +83,86 @@ const harvest = (creep: Creep) => {
     }
     if (source) {
       creep.moveTo(source, { visualizePathStyle: { stroke: "#ffaa00" } });
+      return true;
     }
-  } else {
-    setCreepTimeout(creep, 10);
   }
+  setCreepTimeout(creep, 10);
+
+  return false;
+};
+
+const transfer = (creep: Creep) => {
+  const targets = creep.room.find(FIND_STRUCTURES, {
+    filter: structure => {
+      return (
+        (structure.structureType == STRUCTURE_EXTENSION ||
+          structure.structureType == STRUCTURE_SPAWN ||
+          structure.structureType == STRUCTURE_TOWER ||
+          structure.structureType == STRUCTURE_STORAGE) &&
+        structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+      );
+    }
+  });
+  if (targets.length > 0) {
+    if (creep.transfer(targets[0], RESOURCE_ENERGY) == ERR_NOT_IN_RANGE) {
+      creep.moveTo(targets[0], { visualizePathStyle: { stroke: "#ffffff" } });
+    }
+  }
+};
+
+const build = (creep: Creep) => {
+  let targets = creep.room.find(FIND_CONSTRUCTION_SITES);
+  if (targets.length) {
+    if (creep.build(targets[0]) == ERR_NOT_IN_RANGE) {
+      creep.moveTo(targets[0], { visualizePathStyle: { stroke: "#ffffff" } });
+      return true;
+    }
+  }
+  return false;
+};
+
+const withdraw = (creep: Creep) => {
+  // find ruins in room and try to harvest them
+  let ruins = creep.room.find(FIND_RUINS);
+  // get ruin that has > 0 energy
+  let ruin = ruins.find(ruin => ruin.store.getUsedCapacity(RESOURCE_ENERGY) > 0);
+  if (ruin) {
+    // try to withdraw from ruin
+    creep.say("🔍");
+    if (creep.withdraw(ruin, RESOURCE_ENERGY) == ERR_NOT_IN_RANGE) {
+      creep.moveTo(ruin, { visualizePathStyle: { stroke: "#ffffff" } });
+    }
+  }
+};
+
+const getWalkableLocations = (source: Source) => {
+  // check terrain around source and return locations that are walkable at range 1
+  let terrain = source.room.lookForAtArea(
+    LOOK_TERRAIN,
+    source.pos.y - 1,
+    source.pos.x - 1,
+    source.pos.y + 1,
+    source.pos.x + 1,
+    true
+  );
+  // get locations that are walkable
+  let walkableLocations = terrain.filter(location => location.terrain !== "wall");
+  return walkableLocations.length;
 };
 
 const loop = (creep: Creep) => {
   // harvester logic
   if (creep.memory.role === "harvester") {
     if (creep.store.getFreeCapacity() > 0) {
-      harvest(creep);
-    } else {
-      const targets = creep.room.find(FIND_STRUCTURES, {
-        filter: structure => {
-          return (
-            (structure.structureType == STRUCTURE_EXTENSION ||
-              structure.structureType == STRUCTURE_SPAWN ||
-              structure.structureType == STRUCTURE_TOWER ||
-              structure.structureType == STRUCTURE_STORAGE) &&
-            structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0
-          );
-        }
-      });
-      if (targets.length > 0) {
-        if (creep.transfer(targets[0], RESOURCE_ENERGY) == ERR_NOT_IN_RANGE) {
-          creep.moveTo(targets[0], { visualizePathStyle: { stroke: "#ffffff" } });
-        }
+      if (!harvest(creep)) {
+        // get all room sources and get all id
+        let sources = creep.room.find(FIND_SOURCES);
+        let sourceIds = sources.map(source => source.id);
+        creep.memory.forgetTarget = sourceIds;
+        withdraw(creep);
       }
+    } else {
+      transfer(creep);
     }
   }
 
@@ -158,11 +198,8 @@ const loop = (creep: Creep) => {
     }
 
     if (creep.memory.working) {
-      let targets = creep.room.find(FIND_CONSTRUCTION_SITES);
-      if (targets.length) {
-        if (creep.build(targets[0]) == ERR_NOT_IN_RANGE) {
-          creep.moveTo(targets[0], { visualizePathStyle: { stroke: "#ffffff" } });
-        }
+      if (!build(creep)) {
+        transfer(creep);
       }
     } else {
       harvest(creep);
