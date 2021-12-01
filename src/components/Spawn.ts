@@ -18,7 +18,7 @@ const creepTable: CreepDefinition[] = [
   {
     role: "builder",
     body: [WORK, CARRY, CARRY, MOVE, MOVE],
-    limit: 2
+    limit: 3
   }
 ];
 

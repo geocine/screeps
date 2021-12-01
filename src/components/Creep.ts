@@ -30,17 +30,21 @@ const getNextClosestResource = (creep: Creep): Source | null => {
     forgetTarget = creep.memory.forgetTarget?.map((target: Id<Source>): Source => {
       return Game.getObjectById(target) as Source;
     });
+    console.log(`${creep.name} list of forget target ${JSON.stringify(forgetTarget.map(target => target.id))}`);
   }
 
   let availableResources = creep.room.find(FIND_SOURCES, {
     filter: source => {
       // check if source is in forgetTarget
       if (forgetTarget) {
-        return !forgetTarget.includes(source);
+        console.log(`${creep.name} is checking if ${source.id} is available`);
+        return !forgetTarget.includes(source) && source.energy > 0;
       }
       return true;
     }
   });
+
+  console.log(`${creep.name} has ${availableResources.length} available resources`);
 
   // create map for resource with number of creeps near resource
   let resourceMap = new Map<Source, [number, number]>();
@@ -92,12 +96,10 @@ const harvest = (creep: Creep) => {
       setCreepTimeout(creep, 10);
     }
     if (source) {
+      console.log(`${creep.name} is harvesting from ${source.id}`);
       creep.moveTo(source, { visualizePathStyle: { stroke: "#ffaa00" } });
       return true;
     }
-  }
-  if (creep.memory.role !== "harvester" && !source) {
-    harvestStorage(creep);
   }
   setCreepTimeout(creep, 10);
 
@@ -168,6 +170,33 @@ const build = (creep: Creep) => {
   return false;
 };
 
+const repair = (creep: Creep) => {
+  let targets = creep.room.find(FIND_STRUCTURES, {
+    filter: structure => {
+      return (
+        (structure.structureType == STRUCTURE_EXTENSION ||
+          structure.structureType == STRUCTURE_SPAWN ||
+          structure.structureType == STRUCTURE_TOWER ||
+          structure.structureType == STRUCTURE_WALL ||
+          structure.structureType == STRUCTURE_ROAD ||
+          structure.structureType == STRUCTURE_STORAGE) &&
+        structure.hits < structure.hitsMax
+      );
+    }
+  });
+  // sort targets by hits
+  targets.sort((a, b) => {
+    return a.hits - b.hits;
+  });
+  if (targets.length) {
+    if (creep.repair(targets[0]) == ERR_NOT_IN_RANGE) {
+      creep.moveTo(targets[0], { visualizePathStyle: { stroke: "#ffffff" } });
+      return true;
+    }
+  }
+  return false;
+};
+
 const withdraw = (creep: Creep) => {
   // find ruins in room and try to harvest them
   let ruins = creep.room.find(FIND_RUINS);
@@ -183,10 +212,21 @@ const withdraw = (creep: Creep) => {
 };
 
 const harvestStorage = (creep: Creep) => {
-  let storage = creep.room.storage;
-  if (storage) {
-    if (creep.withdraw(storage, RESOURCE_ENERGY) == ERR_NOT_IN_RANGE) {
-      creep.moveTo(storage, { visualizePathStyle: { stroke: "#ffffff" } });
+  // check if there are harvester creeps in room
+  let harvesters = creep.room.find(FIND_MY_CREEPS, {
+    filter: creep => {
+      return creep.memory.role === "harvester";
+    }
+  });
+  // if there are no harvesters in room
+  if (harvesters.length < 3) {
+    harvest(creep);
+  } else {
+    let storage = creep.room.storage;
+    if (storage) {
+      if (creep.withdraw(storage, RESOURCE_ENERGY) == ERR_NOT_IN_RANGE) {
+        creep.moveTo(storage, { visualizePathStyle: { stroke: "#ffffff" } });
+      }
     }
   }
 };
@@ -225,10 +265,6 @@ const loop = (creep: Creep) => {
   if (creep.memory.role === "harvester") {
     if (creep.store.getFreeCapacity() > 0) {
       if (!harvest(creep)) {
-        // get all room sources and get all id
-        let sources = creep.room.find(FIND_SOURCES);
-        let sourceIds = sources.map(source => source.id);
-        creep.memory.forgetTarget = sourceIds;
         withdraw(creep);
       }
     } else {
@@ -248,11 +284,22 @@ const loop = (creep: Creep) => {
     }
 
     if (creep.memory.working && creep.room.controller) {
-      if (creep.upgradeController(creep.room.controller) == ERR_NOT_IN_RANGE) {
-        creep.moveTo(creep.room.controller, { visualizePathStyle: { stroke: "#ffffff" } });
+      // check if there are harvesters in the room
+      let harvesters = creep.room.find(FIND_MY_CREEPS, {
+        filter: creep => {
+          return creep.memory.role === "harvester";
+        }
+      });
+      // if there are no harvesters in room
+      if (harvesters.length < 3) {
+        transfer(creep);
+      } else {
+        if (creep.upgradeController(creep.room.controller) == ERR_NOT_IN_RANGE) {
+          creep.moveTo(creep.room.controller, { visualizePathStyle: { stroke: "#ffffff" } });
+        }
       }
     } else {
-      harvest(creep);
+      harvestStorage(creep);
     }
   }
 
@@ -268,12 +315,16 @@ const loop = (creep: Creep) => {
     }
 
     if (creep.memory.working) {
+      console.log(`${creep.name} is building`);
       if (!build(creep)) {
-        transfer(creep);
+        repair(creep);
       }
     } else {
-      harvest(creep);
+      harvestStorage(creep);
     }
+    // //  get Spawn1 location
+    //  let spawn = Game.spawns["Spawn1"];
+    //  creep.moveTo(spawn.pos.x, spawn.pos.y);
   }
 };
 
