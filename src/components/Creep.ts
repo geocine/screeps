@@ -1,3 +1,17 @@
+import {
+  AnyEventObject,
+  createMachine,
+  EventObject,
+  interpret,
+  Typestate,
+  Interpreter,
+  assign,
+  MachineConfig,
+  MachineOptions,
+  ActionObject
+} from "xstate";
+import { Model } from "xstate/lib/model.types";
+
 const getCreepsNearResource = (source: Source, creep: Creep) => {
   let creepsAroundResource1 = source.pos
     .findInRange(FIND_MY_CREEPS, 2)
@@ -30,21 +44,21 @@ const getNextClosestResource = (creep: Creep): Source | null => {
     forgetTarget = creep.memory.forgetTarget?.map((target: Id<Source>): Source => {
       return Game.getObjectById(target) as Source;
     });
-    console.log(`${creep.name} list of forget target ${JSON.stringify(forgetTarget.map(target => target.id))}`);
+    // console.log(`${creep.name} list of forget target ${JSON.stringify(forgetTarget.map(target => target.id))}`);
   }
 
   let availableResources = creep.room.find(FIND_SOURCES, {
     filter: source => {
       // check if source is in forgetTarget
       if (forgetTarget) {
-        console.log(`${creep.name} is checking if ${source.id} is available`);
+        // console.log(`${creep.name} is checking if ${source.id} is available`);
         return !forgetTarget.includes(source) && source.energy > 0;
       }
       return true;
     }
   });
 
-  console.log(`${creep.name} has ${availableResources.length} available resources`);
+  // console.log(`${creep.name} has ${availableResources.length} available resources`);
 
   // create map for resource with number of creeps near resource
   let resourceMap = new Map<Source, [number, number]>();
@@ -86,6 +100,8 @@ const setCreepTimeout = (creep: Creep, timeout: number) => {
 };
 
 const harvest = (creep: Creep) => {
+  // TODO: while harvesting stop checking source , remember source every tick
+
   let source = getNextClosestResource(creep);
   // check if creep is harvesting energy from source
   if (source && creep.harvest(source) == ERR_NOT_IN_RANGE) {
@@ -96,7 +112,7 @@ const harvest = (creep: Creep) => {
       setCreepTimeout(creep, 10);
     }
     if (source) {
-      console.log(`${creep.name} is harvesting from ${source.id}`);
+      // console.log(`${creep.name} is harvesting from ${source.id}`);
       creep.moveTo(source, { visualizePathStyle: { stroke: "#ffaa00" } });
       return true;
     }
@@ -150,6 +166,15 @@ const transfer = (creep: Creep) => {
   } else {
     // get room storage as target for transfer
     target = creep.room.storage;
+
+    // if target is null get spawn as target
+    if (!target) {
+      target = creep.room.find(FIND_STRUCTURES, {
+        filter: structure => {
+          return structure.structureType == STRUCTURE_SPAWN;
+        }
+      })[0] as StructureSpawn;
+    }
   }
 
   if (target) {
@@ -245,7 +270,174 @@ const getWalkableLocations = (source: Source) => {
   return terrain.filter(location => location.terrain !== "wall");
 };
 
-const loop = (creep: Creep) => {
+const useCreepMachine = <
+  TContext extends object,
+  TEvent extends EventObject = AnyEventObject,
+  TState extends Typestate<TContext> = { value: any; context: TContext }
+>(
+  creepState: TContext extends Model<any, any, any, any>
+    ? "Model type no longer supported as generic type. Please use `model.createMachine(...)` instead."
+    : MachineConfig<TContext, any, TEvent>,
+  creepActions: Partial<MachineOptions<TContext, TEvent>>,
+  creep: Creep
+): [string, Interpreter<TContext, any, TEvent, TState>["send"], Interpreter<TContext, any, TEvent, TState>] => {
+  const globalObject = global.creepStates[creep.name];
+  let service: Interpreter<TContext, any, TEvent, TState>;
+  if (!globalObject) {
+    creepState.context = creep.memory.context;
+    const stateMachine = createMachine<TContext, TEvent, TState>(creepState, creepActions);
+    service = interpret(stateMachine)
+      .onTransition(state => {
+        if (state.changed) {
+          creep.memory.state = state.value as string;
+        }
+      })
+      .start(creep.memory.state ?? stateMachine.initialState.value) as unknown as Interpreter<
+      TContext,
+      any,
+      TEvent,
+      TState
+    >;
+    global.creepStates[creep.name] = service as unknown as Interpreter<
+      unknown,
+      any,
+      AnyEventObject,
+      { value: any; context: unknown }
+    >;
+  } else {
+    service = globalObject as unknown as Interpreter<TContext, any, TEvent, TState>;
+  }
+
+  return [creep.memory.state ?? (creepState.initial as string), service.send, service];
+};
+
+// set creep.memory.target
+// set creep.memory.task = 0 -> to, 1 -> back // might not need
+
+const creepState = {
+  id: "creep",
+  initial: "idle",
+  states: {
+    idle: {
+      entry: "doIdle",
+      on: {
+        SEARCH: "searching"
+      }
+    },
+    searching: {
+      entry: "doSearch",
+      always: [
+        { target: "moving", cond: "targetFound" },
+        { target: "idle", actions: assign({ from: "searching" }) }
+      ]
+    },
+    moving: {
+      entry: "doMove",
+      always: [
+        {
+          target: "idle",
+          actions: assign({ from: "moving" }),
+          cond: "targetFull"
+        },
+        { target: "working", cond: "targetReached" }
+      ],
+      on: {
+        WORK: { target: "working", cond: "targetReached" }
+      }
+    },
+    working: {
+      entry: "doWork",
+      always: [
+        {
+          target: "idle",
+          actions: assign({ from: "working" }),
+          cond: "taskDone"
+        }
+      ],
+      on: {
+        DONE: {
+          target: "idle",
+          actions: assign({ from: "working" }),
+          cond: "taskDone"
+        }
+      }
+    }
+  }
+};
+const creepActions = {
+  actions: {
+    doIdle(context: CreepContext, event: EventObject) {
+      // If idle for some tick reset state
+      // creep.memory.target = null
+      // creep.memory.task = 0
+      console.log("doIdle", context, JSON.stringify(event));
+    },
+    doSearch() {
+      // if creep.memory.target != null  return
+
+      // Check if getFreeCapacity() > 0
+      // creep.memory.task = 0
+      // source - Check if availableResources > 0
+      // ruins - ruin.store.getUsedCapacity(RESOURCE_ENERGY) > 0
+      // structures - construction sites
+
+      // Check if getFreeCapacity() == 0
+      // creep.memory.task = 1
+      // tower
+      // spawn
+      // buildables
+
+      // Set creep.memory.target = source
+      console.log("doSearch");
+    },
+    doMove(context: CreepContext, event: EventObject) {
+      // if target is range == 0 return
+      // else creep.moveTo
+      console.log("doMove", context, JSON.stringify(event));
+    },
+    doWork() {
+      // if target is range == 0 do -> work
+
+      // creep.memory.task 0 / role
+      // harvest, -> creep.store.getFreeCapacity() > 0
+      // withdraw, -> ruin.store.getUsedCapacity(RESOURCE_ENERGY) > 0
+
+      // creep.memory.task 1 / role
+      // upgrade, -> creep.store.getFreeCapacity() == 0
+      // transfer -> creep.store.getFreeCapacity() == 0
+      // repair,  -> creep.store.getFreeCapacity() == 0
+      // build,  -> creep.store.getFreeCapacity() == 0
+
+      // if conditions above NOT met creep.memory.target = null
+      console.log("doWork");
+    }
+  },
+  guards: {
+    targetFound() {
+      // creep.memory.target is not null
+      // and creep.memory.seekTimeout != Game.time -> move
+      return true;
+    },
+    targetReached() {
+      // check if target is in range -> true work
+      return true;
+    },
+    targetFull() {
+      // check if target range is <= 3
+      // set creep.memory.seekTimeout = Game.time + timeout
+
+      return false;
+    },
+    taskDone() {
+      // check if creep.memory.target == null
+      return false;
+    }
+  }
+};
+
+const update = (creep: Creep) => {
+  let [state, send] = useCreepMachine(creepState, creepActions, creep);
+
   if (!global.roomSources) {
     // get all source in room
     const sources = creep.room.find(FIND_SOURCES);
@@ -261,73 +453,19 @@ const loop = (creep: Creep) => {
     });
   }
 
-  // harvester logic
-  if (creep.memory.role === "harvester") {
-    if (creep.store.getFreeCapacity() > 0) {
-      if (!harvest(creep)) {
-        withdraw(creep);
-      }
-    } else {
-      transfer(creep);
-    }
-  }
-
-  // upgrader logic
-  if (creep.memory.role === "upgrader") {
-    if (creep.memory.working && creep.store[RESOURCE_ENERGY] == 0) {
-      creep.memory.working = false;
-      creep.say("🔄 harvest");
-    }
-    if (!creep.memory.working && creep.store.getFreeCapacity() == 0) {
-      creep.memory.working = true;
-      creep.say("⚡ upgrade");
-    }
-
-    if (creep.memory.working && creep.room.controller) {
-      // check if there are harvesters in the room
-      let harvesters = creep.room.find(FIND_MY_CREEPS, {
-        filter: creep => {
-          return creep.memory.role === "harvester";
-        }
-      });
-      // if there are no harvesters in room
-      if (harvesters.length < 3) {
-        transfer(creep);
-      } else {
-        if (creep.upgradeController(creep.room.controller) == ERR_NOT_IN_RANGE) {
-          creep.moveTo(creep.room.controller, { visualizePathStyle: { stroke: "#ffffff" } });
-        }
-      }
-    } else {
-      harvestStorage(creep);
-    }
-  }
-
-  // builder logic
-  if (creep.memory.role === "builder") {
-    if (creep.memory.working && creep.store[RESOURCE_ENERGY] == 0) {
-      creep.memory.working = false;
-      creep.say("🔄 harvest");
-    }
-    if (!creep.memory.working && creep.store.getFreeCapacity() == 0) {
-      creep.memory.working = true;
-      creep.say("🚧 work");
-    }
-
-    if (creep.memory.working) {
-      console.log(`${creep.name} is building`);
-      if (!build(creep)) {
-        repair(creep);
-      }
-    } else {
-      harvestStorage(creep);
-    }
-    // //  get Spawn1 location
-    //  let spawn = Game.spawns["Spawn1"];
-    //  creep.moveTo(spawn.pos.x, spawn.pos.y);
+  switch (state) {
+    case "idle":
+      send("SEARCH");
+      break;
+    case "moving":
+      send("WORK");
+      break;
+    case "working":
+      send("DONE");
+      break;
   }
 };
 
 export default {
-  loop
+  update
 };

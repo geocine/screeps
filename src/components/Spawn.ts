@@ -7,24 +7,31 @@ interface CreepDefinition {
 const creepTable: CreepDefinition[] = [
   {
     role: "harvester",
-    body: [WORK, WORK, CARRY, CARRY, CARRY, MOVE, MOVE],
-    limit: 3
+    body: [WORK, CARRY, CARRY, MOVE, MOVE],
+    limit: 1
   },
   {
     role: "upgrader",
     body: [WORK, CARRY, CARRY, MOVE, MOVE],
     limit: 2
-  },
-  {
-    role: "builder",
-    body: [WORK, CARRY, CARRY, MOVE, MOVE],
-    limit: 3
   }
+  // {
+  //   role: "builder",
+  //   body: [WORK, CARRY, CARRY, MOVE, MOVE],
+  //   limit: 3
+  // }
 ];
 
-const loop = () => {
-  const spawn = Game.spawns["Spawn1"];
+const update = () => {
+  // delete memory of dead creeps
+  for (const name in Memory.creeps) {
+    if (!(name in Game.creeps)) {
+      delete Memory.creeps[name];
+      delete global.creepStates[name];
+    }
+  }
 
+  const spawn = Game.spawns["Spawn1"];
   for (const creepDefinition of creepTable) {
     const creeps = _.filter(Game.creeps, (creep: Creep) => creep.memory.role === creepDefinition.role);
     if (creeps.length < creepDefinition.limit) {
@@ -40,5 +47,5 @@ const loop = () => {
 };
 
 export default {
-  loop
+  update
 };

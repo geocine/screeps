@@ -1,3 +1,5 @@
+import { AnyEventObject, Interpreter, State } from "xstate";
+
 export {};
 
 declare global {
@@ -11,12 +13,17 @@ declare global {
     _parsed: Memory;
   }
 
+  interface CreepContext {
+    from: string;
+  }
   interface CreepMemory {
     role: string;
     room?: string;
     working?: boolean;
     forgetTarget?: Id<Source>[];
     seekTimeout?: number;
+    state?: string;
+    context?: CreepContext;
   }
 
   interface Creep {
@@ -35,6 +42,7 @@ declare global {
       log: any;
       Memory?: Memory;
       roomSources: RoomSource[];
+      creepStates: { [creepId: string]: Interpreter<unknown, any, AnyEventObject, { value: any; context: unknown }> };
     }
   }
 }
